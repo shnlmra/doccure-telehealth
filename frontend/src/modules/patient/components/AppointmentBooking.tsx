@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, ChevronLeft, CheckCircle, AlertTriangle } from 'lucide-react';
+import { io } from 'socket.io-client';
 
 interface Doctor {
   id: string;
@@ -34,40 +35,65 @@ export default function AppointmentBooking({ apiUrl, patientId, doctor, onBack, 
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchSlots = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(`${apiUrl}/doctors/${doctor.id}/schedule`);
-        if (res.ok) {
-          const data = await res.json();
-          // Filter to only show available slots
-          setSlots(data.filter((s: ScheduleSlot) => s.isAvailable));
-        }
-      } catch (e) {
-        console.warn('Could not fetch doctor schedule, fallback to mock slots.');
-        // Generate mock slots for testing
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowStr = tomorrow.toISOString().split('T')[0];
-
-        const dayAfter = new Date();
-        dayAfter.setDate(dayAfter.getDate() + 2);
-        const dayAfterStr = dayAfter.toISOString().split('T')[0];
-
-        setSlots([
-          { id: 'mock-slot-1', date: tomorrowStr, timeSlot: '09:00 - 09:30', isAvailable: true },
-          { id: 'mock-slot-2', date: tomorrowStr, timeSlot: '10:30 - 11:00', isAvailable: true },
-          { id: 'mock-slot-3', date: tomorrowStr, timeSlot: '14:00 - 14:30', isAvailable: true },
-          { id: 'mock-slot-4', date: dayAfterStr, timeSlot: '10:00 - 10:30', isAvailable: true },
-          { id: 'mock-slot-5', date: dayAfterStr, timeSlot: '15:30 - 16:00', isAvailable: true },
-        ]);
-      } finally {
-        setLoading(false);
+  const fetchSlots = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/doctors/${doctor.id}/schedule`);
+      if (!res.ok) {
+        throw new Error('Failed to load slots');
       }
-    };
+      const data = await res.json();
+      // Filter to only show available slots
+      setSlots(data.filter((s: ScheduleSlot) => s.isAvailable));
+    } catch (e) {
+      console.warn('Could not fetch doctor schedule, fallback to mock slots.');
+      // Generate mock slots for testing
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
+      const dayAfter = new Date();
+      dayAfter.setDate(dayAfter.getDate() + 2);
+      const dayAfterStr = dayAfter.toISOString().split('T')[0];
+
+      setSlots([
+        { id: 'mock-slot-1', date: tomorrowStr, timeSlot: '09:00 - 09:30', isAvailable: true },
+        { id: 'mock-slot-2', date: tomorrowStr, timeSlot: '10:30 - 11:00', isAvailable: true },
+        { id: 'mock-slot-3', date: tomorrowStr, timeSlot: '14:00 - 14:30', isAvailable: true },
+        { id: 'mock-slot-4', date: dayAfterStr, timeSlot: '10:00 - 10:30', isAvailable: true },
+        { id: 'mock-slot-5', date: dayAfterStr, timeSlot: '15:30 - 16:00', isAvailable: true },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchSlots();
+  }, [apiUrl, doctor.id]);
+
+  useEffect(() => {
+    if (!doctor.id || doctor.id.startsWith('mock-')) return;
+
+    const socketUrl = apiUrl.replace('/api', '');
+    const socket = io(socketUrl, {
+      transports: ['websocket'],
+    });
+
+    socket.on('connect', () => {
+      console.log('[AppointmentBooking] Connected to socket');
+    });
+
+    socket.on('schedule_updated', (data: { doctorId: string }) => {
+      if (data.doctorId === doctor.id) {
+        console.log('[AppointmentBooking] Schedule updated for current doctor. Refreshing slots...');
+        fetchSlots();
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
   }, [apiUrl, doctor.id]);
 
   const handleBook = async () => {
@@ -75,12 +101,20 @@ export default function AppointmentBooking({ apiUrl, patientId, doctor, onBack, 
     setBooking(true);
     setError(null);
 
+    if (!patientId || patientId.startsWith('mock-')) {
+      setTimeout(() => {
+        setSuccess(true);
+        setTimeout(() => {
+          onBookingSuccess();
+        }, 1500);
+        setBooking(false);
+      }, 500);
+      return;
+    }
+
     const payload = {
       doctorId: doctor.id,
-      date: selectedSlot.date,
-      timeSlot: selectedSlot.timeSlot,
-      symptoms,
-      type: 'video',
+      scheduleId: selectedSlot.id,
     };
 
     try {

@@ -12,6 +12,7 @@ import { Prescription } from '../doctor/entities/prescription.entity';
 import { UpdatePatientProfileDto } from './dto/create-patient.dto';
 import { BookAppointmentDto } from './dto/book-appointment.dto';
 import { AskAiDto } from './dto/ask-ai.dto';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 @Injectable()
 export class PatientService {
@@ -39,9 +40,19 @@ export class PatientService {
 
     @InjectRepository(Prescription)
     private prescriptionRepository: Repository<Prescription>,
+
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
 
+  private validateUuid(id: string, name: string): void {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!id || !uuidRegex.test(id)) {
+      throw new BadRequestException(`Invalid ${name} format. Expected UUID.`);
+    }
+  }
+
   async createProfile(userId: string, dto: UpdatePatientProfileDto): Promise<PatientProfile> {
+    this.validateUuid(userId, 'userId');
     let patient = await this.patientRepository.findOne({ where: { userId } });
     if (!patient) {
       patient = this.patientRepository.create({ userId });
@@ -59,6 +70,7 @@ export class PatientService {
   }
 
   async getProfile(userId: string): Promise<PatientProfile> {
+    this.validateUuid(userId, 'userId');
     const profile = await this.patientRepository.findOne({ where: { userId } });
     if (!profile) {
       throw new NotFoundException('Patient profile does not exist.');
@@ -66,7 +78,40 @@ export class PatientService {
     return profile;
   }
 
+  async findOne(id: string): Promise<PatientProfile> {
+    this.validateUuid(id, 'id');
+    const profile = await this.patientRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
+    if (!profile) {
+      throw new NotFoundException('Patient profile not found.');
+    }
+    return profile;
+  }
+
+  async updateProfileById(id: string, dto: UpdatePatientProfileDto): Promise<PatientProfile> {
+    this.validateUuid(id, 'id');
+    const patient = await this.patientRepository.findOne({ where: { id } });
+    if (!patient) {
+      throw new NotFoundException('Patient profile not found.');
+    }
+
+    patient.name = dto.name;
+    patient.birthday = dto.birthday || patient.birthday;
+    patient.weight = dto.weight !== undefined ? dto.weight : patient.weight;
+    patient.height = dto.height !== undefined ? dto.height : patient.height;
+    patient.contactNumber = dto.contactNumber || patient.contactNumber;
+    patient.medicalHistory = dto.medicalHistory || patient.medicalHistory;
+    patient.profilePicture = dto.profilePicture || patient.profilePicture;
+
+    return this.patientRepository.save(patient);
+  }
+
   async bookAppointment(patientId: string, bookDto: BookAppointmentDto): Promise<Appointment> {
+    this.validateUuid(patientId, 'patientId');
+    if (bookDto.doctorId) this.validateUuid(bookDto.doctorId, 'doctorId');
+    if (bookDto.scheduleId) this.validateUuid(bookDto.scheduleId, 'scheduleId');
     // 1. Fetch Patient and Doctor profiles
     const patient = await this.patientRepository.findOne({ where: { id: patientId } });
     if (!patient) throw new NotFoundException('Patient profile not found');
@@ -127,20 +172,34 @@ export class PatientService {
     await this.scheduleRepository.save(slot);
 
     // 6. Send push notification to doctor user ID
-    const notif = this.notificationRepository.create({
+    const notifDoctor = this.notificationRepository.create({
       userId: doctor.userId,
       title: 'New Appointment Booked',
       message: `Patient ${patient.name || 'someone'} booked a consultation for ${slot.date} at ${slot.startTime} - ${slot.endTime}.`,
     });
-    await this.notificationRepository.save(notif);
+    await this.notificationRepository.save(notifDoctor);
+    this.notificationsGateway.sendNotification(doctor.userId, notifDoctor);
+
+    // 7. Send push notification to patient user ID
+    const notifPatient = this.notificationRepository.create({
+      userId: patient.userId,
+      title: 'Appointment Booking Confirmed',
+      message: `Your appointment with Dr. ${doctor.name || 'your clinician'} for ${slot.date} at ${slot.startTime} - ${slot.endTime} has been confirmed.`,
+    });
+    await this.notificationRepository.save(notifPatient);
+    this.notificationsGateway.sendNotification(patient.userId, notifPatient);
+
+    this.notificationsGateway.broadcastScheduleUpdate(bookDto.doctorId);
 
     return savedAppointment;
   }
 
   async cancelAppointment(patientId: string, appointmentId: string): Promise<void> {
+    this.validateUuid(patientId, 'patientId');
+    this.validateUuid(appointmentId, 'appointmentId');
     const appointment = await this.appointmentRepository.findOne({
       where: { id: appointmentId, patientId },
-      relations: ['schedule', 'doctor'],
+      relations: ['schedule', 'doctor', 'patient'],
     });
 
     if (!appointment) {
@@ -163,16 +222,33 @@ export class PatientService {
 
     // 3. Notify doctor
     if (appointment.doctor) {
-      const notif = this.notificationRepository.create({
+      const notifDoctor = this.notificationRepository.create({
         userId: appointment.doctor.userId,
         title: 'Appointment Cancelled',
         message: `An appointment scheduled for ${appointment.schedule?.date || ''} has been cancelled by the patient.`,
       });
-      await this.notificationRepository.save(notif);
+      await this.notificationRepository.save(notifDoctor);
+      this.notificationsGateway.sendNotification(appointment.doctor.userId, notifDoctor);
     }
+
+    // 4. Notify patient
+    if (appointment.patient) {
+      const notifPatient = this.notificationRepository.create({
+        userId: appointment.patient.userId,
+        title: 'Appointment Cancelled',
+        message: `Your appointment with Dr. ${appointment.doctor?.name || 'your clinician'} scheduled for ${appointment.schedule?.date || ''} has been cancelled.`,
+      });
+      await this.notificationRepository.save(notifPatient);
+      this.notificationsGateway.sendNotification(appointment.patient.userId, notifPatient);
+    }
+
+    this.notificationsGateway.broadcastScheduleUpdate(appointment.doctorId);
   }
 
   async rescheduleAppointment(patientId: string, appointmentId: string, newScheduleId: string): Promise<Appointment> {
+    this.validateUuid(patientId, 'patientId');
+    this.validateUuid(appointmentId, 'appointmentId');
+    this.validateUuid(newScheduleId, 'newScheduleId');
     const appointment = await this.appointmentRepository.findOne({
       where: { id: appointmentId, patientId },
       relations: ['schedule', 'doctor', 'patient'],
@@ -203,26 +279,42 @@ export class PatientService {
 
     // 4. Notify doctor
     if (appointment.doctor) {
-      const notif = this.notificationRepository.create({
+      const notifDoctor = this.notificationRepository.create({
         userId: appointment.doctor.userId,
         title: 'Appointment Rescheduled',
         message: `Patient ${appointment.patient?.name || ''} rescheduled appointment to ${newSlot.date} at ${newSlot.startTime} - ${newSlot.endTime}.`,
       });
-      await this.notificationRepository.save(notif);
+      await this.notificationRepository.save(notifDoctor);
+      this.notificationsGateway.sendNotification(appointment.doctor.userId, notifDoctor);
     }
+
+    // 5. Notify patient
+    if (appointment.patient) {
+      const notifPatient = this.notificationRepository.create({
+        userId: appointment.patient.userId,
+        title: 'Appointment Rescheduled',
+        message: `Your appointment with Dr. ${appointment.doctor?.name || 'your clinician'} has been rescheduled to ${newSlot.date} at ${newSlot.startTime} - ${newSlot.endTime}.`,
+      });
+      await this.notificationRepository.save(notifPatient);
+      this.notificationsGateway.sendNotification(appointment.patient.userId, notifPatient);
+    }
+
+    this.notificationsGateway.broadcastScheduleUpdate(appointment.doctorId);
 
     return updatedApp;
   }
 
   async getAppointments(patientId: string): Promise<Appointment[]> {
+    this.validateUuid(patientId, 'patientId');
     return this.appointmentRepository.find({
       where: { patientId },
-      relations: ['doctor', 'schedule'],
+      relations: ['doctor', 'schedule', 'medicalRecords', 'prescriptions'],
       order: { createdAt: 'DESC' },
     });
   }
 
   async askAi(patientId: string, askAiDto: AskAiDto): Promise<AiRecommendationLog> {
+    this.validateUuid(patientId, 'patientId');
     // Keyword matching logic
     const symptoms = askAiDto.symptoms.toLowerCase();
     let suggestSpecialization = 'General Physician';
@@ -265,6 +357,7 @@ export class PatientService {
   }
 
   async getRecommendations(patientId: string): Promise<AiRecommendationLog[]> {
+    this.validateUuid(patientId, 'patientId');
     return this.recommendationRepository.find({
       where: { patientId },
       order: { createdAt: 'DESC' },
@@ -272,6 +365,7 @@ export class PatientService {
   }
 
   async getNotifications(userId: string): Promise<Notification[]> {
+    this.validateUuid(userId, 'userId');
     return this.notificationRepository.find({
       where: { userId },
       order: { createdAt: 'DESC' },
@@ -279,6 +373,8 @@ export class PatientService {
   }
 
   async readNotification(userId: string, id: string): Promise<Notification> {
+    this.validateUuid(userId, 'userId');
+    this.validateUuid(id, 'id');
     const notif = await this.notificationRepository.findOne({ where: { id, userId } });
     if (!notif) throw new NotFoundException('Notification not found');
     notif.isRead = true;
@@ -286,6 +382,7 @@ export class PatientService {
   }
 
   async getMedicalRecords(patientId: string): Promise<any> {
+    this.validateUuid(patientId, 'patientId');
     // 1. Fetch own medical records
     const medicalRecords = await this.medicalRecordRepository.find({
       where: { patientId },
@@ -307,6 +404,8 @@ export class PatientService {
   }
 
   async joinSession(patientId: string, appointmentId: string): Promise<any> {
+    this.validateUuid(patientId, 'patientId');
+    this.validateUuid(appointmentId, 'appointmentId');
     const appointment = await this.appointmentRepository.findOne({
       where: { id: appointmentId, patientId },
     });

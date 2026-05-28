@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UserPlus, CheckCircle, AlertCircle } from 'lucide-react';
+import { useToast } from '@/modules/patient/components/ToastContext';
 
 interface AccountCreationProps {
   apiUrl: string;
@@ -7,6 +8,7 @@ interface AccountCreationProps {
 }
 
 export default function AccountCreation({ apiUrl, onSuccess }: AccountCreationProps) {
+  const { addToast } = useToast();
   const [isLogin, setIsLogin] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
@@ -36,8 +38,13 @@ export default function AccountCreation({ apiUrl, onSuccess }: AccountCreationPr
           body: JSON.stringify({ email: formData.email, password: formData.password }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Login failed.');
+        if (!res.ok) {
+          const apiError = new Error(data.message || 'Login failed.');
+          (apiError as any).isApiError = true;
+          throw apiError;
+        }
 
+        addToast('Welcome Back', 'Logged in successfully!', 'success');
         setMessage({ type: 'success', text: 'Logged in successfully!' });
         setTimeout(() => {
           onSuccess(data.user.profileId || 'mock-profile-id', data.user.email, data.user.id);
@@ -51,7 +58,11 @@ export default function AccountCreation({ apiUrl, onSuccess }: AccountCreationPr
           body: JSON.stringify({ email: formData.email, password: formData.password, role: 'patient' }),
         });
         const regData = await resRegister.json();
-        if (!resRegister.ok) throw new Error(regData.message || 'Registration failed.');
+        if (!resRegister.ok) {
+          const apiError = new Error(regData.message || 'Registration failed.');
+          (apiError as any).isApiError = true;
+          throw apiError;
+        }
 
         // Step 2: Update Profile details
         const resProfile = await fetch(`${apiUrl}/patients/${regData.userId}/profile`, {
@@ -67,19 +78,31 @@ export default function AccountCreation({ apiUrl, onSuccess }: AccountCreationPr
           }),
         });
         const profData = await resProfile.json();
-        if (!resProfile.ok) throw new Error(profData.message || 'Profile creation failed.');
+        if (!resProfile.ok) {
+          const apiError = new Error(profData.message || 'Profile creation failed.');
+          (apiError as any).isApiError = true;
+          throw apiError;
+        }
 
+        addToast('Registration Success', 'Account registered and profile completed!', 'success');
         setMessage({ type: 'success', text: 'Account registered and profile completed!' });
         setTimeout(() => {
           onSuccess(profData.id, regData.email, regData.userId);
         }, 1000);
       }
     } catch (err: any) {
-      console.warn('API error during auth/register, using mock bypass.', err);
-      setMessage({ type: 'error', text: err.message || 'Could not connect. Fallback to mock session.' });
-      setTimeout(() => {
-        onSuccess('mock-patient-profile-123', formData.email || 'john.doe@example.com', 'mock-user-id-789');
-      }, 1500);
+      console.warn('API error during auth/register.', err);
+      
+      if (err.isApiError) {
+        addToast('Authentication Alert', err.message, 'error');
+        setMessage({ type: 'error', text: err.message });
+      } else {
+        addToast('Authentication Alert', 'Could not connect. Fallback to mock session.', 'warning');
+        setMessage({ type: 'error', text: 'Could not connect. Fallback to mock session.' });
+        setTimeout(() => {
+          onSuccess('mock-patient-profile-123', formData.email || 'john.doe@example.com', 'mock-user-id-789');
+        }, 1500);
+      }
     } finally {
       setLoading(false);
     }

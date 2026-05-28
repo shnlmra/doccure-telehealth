@@ -28,12 +28,67 @@ export default function MedicalRecords({ apiUrl, patientId }: MedicalRecordsProp
   const [loading, setLoading] = useState(true);
 
   const fetchRecords = async () => {
+    if (!patientId || patientId.startsWith('mock-')) {
+      setRecords([
+        {
+          id: 'mock-rec-1',
+          createdAt: new Date().toISOString(),
+          chiefComplaint: 'Mild dry cough, seasonal chest tightness.',
+          diagnosis: 'Acute Bronchitis (mild stage)',
+          notes: 'Patient advised to steam inhale, hydrate, and complete the prescribed antibiotic cycle.',
+          prescriptions: [
+            { id: 'p1', medicationName: 'Amoxicillin', dosage: '500mg', frequency: 'Three times a day', duration: '7 days' },
+            { id: 'p2', medicationName: 'Dextromethorphan (Cough Syrup)', dosage: '10ml', frequency: 'Every 8 hours as needed', duration: '5 days' }
+          ]
+        },
+        {
+          id: 'mock-rec-2',
+          createdAt: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
+          chiefComplaint: 'Persistent skin rash and itching on lower forearms.',
+          diagnosis: 'Contact Dermatitis',
+          notes: 'Identified allergy to laundry detergent. Apply topical cream.',
+          prescriptions: [
+            { id: 'p3', medicationName: 'Hydrocortisone 1% Cream', dosage: 'Apply thin layer', frequency: 'Twice daily', duration: '10 days' }
+          ]
+        }
+      ]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${apiUrl}/patients/${patientId}/medical-records`);
       if (res.ok) {
         const data = await res.json();
-        setRecords(data);
+        const mapped = (data.medicalRecords || []).map((rec: any) => {
+          const appPrescriptions = (data.prescriptions || [])
+            .filter((p: any) => p.appointmentId === rec.appointmentId)
+            .map((p: any) => ({
+              id: p.id,
+              medicationName: p.medicationName,
+              dosage: p.dosage,
+              frequency: p.instructions ? p.instructions.split(' - ')[0] || '' : '',
+              duration: p.instructions ? p.instructions.split(' - ')[1] || '' : '',
+            }));
+
+          let chiefComplaint = 'N/A';
+          let cleanNotes = rec.notes || '';
+          if (cleanNotes.startsWith('Chief Complaint:')) {
+            const parts = cleanNotes.split('\n\nClinical Notes:');
+            chiefComplaint = parts[0].replace('Chief Complaint:', '').trim();
+            cleanNotes = parts[1] || '';
+          }
+
+          return {
+            id: rec.id,
+            createdAt: rec.createdAt,
+            chiefComplaint,
+            diagnosis: rec.diagnosis,
+            notes: cleanNotes,
+            prescriptions: appPrescriptions,
+          };
+        });
+        setRecords(mapped);
       }
     } catch (e) {
       console.warn('Could not fetch medical history from API, fallback to mock history.');

@@ -38,13 +38,23 @@ export default function ScheduleManagement({ apiUrl, doctorId }: ScheduleManagem
   ];
 
   const fetchSlots = async () => {
+    if (!doctorId || doctorId.startsWith('mock-')) {
+      setSlotsList([
+        { id: 's1', date: tomorrowStr, timeSlot: '09:00 - 09:30', isAvailable: true },
+        { id: 's2', date: tomorrowStr, timeSlot: '10:30 - 11:00', isAvailable: false },
+        { id: 's3', date: tomorrowStr, timeSlot: '14:00 - 14:30', isAvailable: true },
+      ]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${apiUrl}/doctors/${doctorId}/schedule`);
-      if (res.ok) {
-        const data = await res.json();
-        setSlotsList(data);
+      if (!res.ok) {
+        throw new Error('Failed to load slots');
       }
+      const data = await res.json();
+      setSlotsList(data);
     } catch (e) {
       console.warn('Could not load slots from backend API. Fallback to mock logs.');
       setSlotsList([
@@ -77,6 +87,22 @@ export default function ScheduleManagement({ apiUrl, doctorId }: ScheduleManagem
     }
     setSaving(true);
     setMessage(null);
+
+    if (!doctorId || doctorId.startsWith('mock-')) {
+      setTimeout(() => {
+        const newSlots: ScheduleSlot[] = selectedSlots.map((ts, idx) => ({
+          id: `mock-new-slot-${Date.now()}-${idx}`,
+          date,
+          timeSlot: ts,
+          isAvailable: true,
+        }));
+        setSlotsList(prev => [...newSlots, ...prev]);
+        setMessage('Schedule updated successfully! (Local Fallback)');
+        setSelectedSlots([]);
+        setSaving(false);
+      }, 500);
+      return;
+    }
 
     const payload = {
       date,

@@ -44,7 +44,7 @@ export default function ProfileManagement({ apiUrl, userId, doctorId, onProfileU
         setLoading(false);
       }
     };
-    if (userId && userId !== 'mock-user-id') {
+    if (userId && userId !== 'mock-user-id' && !userId.startsWith('mock-')) {
       fetchProfile();
     } else {
       setLoading(false);
@@ -55,6 +55,16 @@ export default function ProfileManagement({ apiUrl, userId, doctorId, onProfileU
     e.preventDefault();
     setSaving(true);
     setError(null);
+
+    if (!userId || userId.startsWith('mock-')) {
+      setTimeout(() => {
+        setSaved(true);
+        onProfileUpdate('mock-doctor-uuid-1234');
+        setTimeout(() => setSaved(false), 2000);
+        setSaving(false);
+      }, 500);
+      return;
+    }
 
     try {
       const res = await fetch(`${apiUrl}/doctors/${userId}/profile`, {

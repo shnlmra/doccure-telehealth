@@ -10,6 +10,7 @@ import { DoctorProfile } from '../doctor/entities/doctor.entity';
 import { DoctorSchedule } from '../doctor/entities/schedule-slot.entity';
 import { MedicalRecord } from '../doctor/entities/consultation-note.entity';
 import { Prescription } from '../doctor/entities/prescription.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { Prescription } from '../doctor/entities/prescription.entity';
       MedicalRecord,
       Prescription,
     ]),
+    NotificationsModule,
   ],
   controllers: [PatientController],
   providers: [PatientService],

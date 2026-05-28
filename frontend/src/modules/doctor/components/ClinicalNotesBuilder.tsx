@@ -49,15 +49,40 @@ export default function ClinicalNotesBuilder({ apiUrl, doctorId, patientId = 'mo
     setLoading(true);
     setMessage(null);
 
-    // Filter out blank prescriptions
-    const validPrescriptions = prescriptions.filter((p: PrescriptionRow) => p.medicationName.trim() !== '');
+    const isMock = (!doctorId || doctorId.startsWith('mock-') || 
+                    !patientId || patientId.startsWith('mock-') || 
+                    !appointmentId || appointmentId.startsWith('mock-'));
+
+    if (isMock) {
+      setTimeout(() => {
+        setMessage({ type: 'success', text: 'Clinical Consultation Record saved successfully! (Local Fallback)' });
+        setChiefComplaint('');
+        setDiagnosis('');
+        setNotes('');
+        setPrescriptions([{ medicationName: '', dosage: '', frequency: '', duration: '' }]);
+
+        if (onSuccess) {
+          setTimeout(onSuccess, 1500);
+        }
+        setLoading(false);
+      }, 500);
+      return;
+    }
+
+    // Filter out blank prescriptions and map to backend DTO
+    const validPrescriptions = prescriptions
+      .filter((p: PrescriptionRow) => p.medicationName.trim() !== '')
+      .map((p: PrescriptionRow) => ({
+        medicationName: p.medicationName,
+        dosage: p.dosage,
+        instructions: `${p.frequency} - ${p.duration}`.trim(),
+      }));
 
     const payload = {
       appointmentId,
       patientId,
-      chiefComplaint,
       diagnosis,
-      notes,
+      notes: `Chief Complaint: ${chiefComplaint}\n\nClinical Notes: ${notes}`.trim(),
       prescriptions: validPrescriptions,
     };
 

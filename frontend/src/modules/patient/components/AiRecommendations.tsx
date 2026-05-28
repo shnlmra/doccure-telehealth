@@ -21,6 +21,25 @@ export default function AiRecommendations({ apiUrl, patientId }: AiRecommendatio
   const [currentRecommendation, setCurrentRecommendation] = useState<Recommendation | null>(null);
 
   const fetchHistory = async () => {
+    if (!patientId || patientId.startsWith('mock-')) {
+      setHistory([
+        {
+          id: 'mock-rec-1',
+          symptoms: 'I have had a mild dry cough and slight chest congestion for three days, no fever.',
+          suggestedSpecialization: 'General Physician',
+          advice: 'Your symptoms appear mild. Keep hydrated and get plenty of rest. If conditions persist or a high fever develops, please schedule an appointment.',
+          createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+        },
+        {
+          id: 'mock-rec-2',
+          symptoms: 'Sudden sharp pain in chest when breathing heavily, feeling slightly dizzy.',
+          suggestedSpecialization: 'Cardiologist',
+          advice: 'WARNING: Symptoms could relate to cardiovascular issues. Please consult a Cardiologist immediately. If experiencing severe shortness of breath or radiating chest pain, seek emergency services.',
+          createdAt: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString()
+        }
+      ]);
+      return;
+    }
     try {
       const res = await fetch(`${apiUrl}/patients/${patientId}/ai-recommendations`);
       if (res.ok) {
@@ -58,6 +77,36 @@ export default function AiRecommendations({ apiUrl, patientId }: AiRecommendatio
 
     setLoading(true);
     setCurrentRecommendation(null);
+
+    if (!patientId || patientId.startsWith('mock-')) {
+      setTimeout(() => {
+        const lower = symptoms.toLowerCase();
+        let suggested = 'General Physician';
+        let adviceText = 'Please keep warm and hydrate. If your symptoms worsen, schedule an appointment.';
+
+        if (lower.includes('chest') || lower.includes('heart') || lower.includes('breath')) {
+          suggested = 'Cardiologist';
+          adviceText = 'WARNING: Symptoms could relate to cardiovascular issues. Please consult a Cardiologist immediately. If experiencing severe shortness of breath or radiating chest pain, seek emergency services.';
+        } else if (lower.includes('rash') || lower.includes('skin') || lower.includes('itch')) {
+          suggested = 'Dermatologist';
+          adviceText = 'Skin rashes can be triggered by allergens or infections. Keep the area clean, avoid scratching, and book a consultation with a Dermatologist.';
+        }
+
+        const mockRec: Recommendation = {
+          id: `mock-rec-${Date.now()}`,
+          symptoms,
+          suggestedSpecialization: suggested,
+          advice: adviceText,
+          createdAt: new Date().toISOString(),
+        };
+
+        setCurrentRecommendation(mockRec);
+        setHistory((prev) => [mockRec, ...prev]);
+        setSymptoms('');
+        setLoading(false);
+      }, 1000);
+      return;
+    }
 
     try {
       const res = await fetch(`${apiUrl}/patients/${patientId}/ai-recommendations`, {

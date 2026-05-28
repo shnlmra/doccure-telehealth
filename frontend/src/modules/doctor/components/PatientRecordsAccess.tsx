@@ -51,6 +51,21 @@ export default function PatientRecordsAccess({ apiUrl, doctorId }: PatientRecord
   };
 
   const fetchHistory = async (patientId: string) => {
+    if (!doctorId || doctorId.startsWith('mock-')) {
+      setPatientHistory([
+        {
+          id: 'h1',
+          createdAt: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
+          chiefComplaint: 'Persistent skin rash and itching on lower forearms.',
+          diagnosis: 'Contact Dermatitis',
+          notes: 'Identified allergy to laundry detergent. Apply topical cream.',
+          prescriptions: [
+            { id: 'p3', medicationName: 'Hydrocortisone 1% Cream', dosage: 'Apply thin layer', frequency: 'Twice daily', duration: '10 days' }
+          ]
+        }
+      ]);
+      return;
+    }
     setLoadingHistory(true);
     try {
       const res = await fetch(`${apiUrl}/doctors/${doctorId}/patients/${patientId}/history`);
